@@ -25,7 +25,7 @@ var mutex sync.Mutex
 func main() {
 	rand.Seed(time.Now().UnixNano()) // Инициализация генератора случайных чисел
 
-	botToken := "7482365392:AAGSycCjzAsFW3aYsOMlTLmkCsxRhSpCg6Q" // Замените на ваш токен
+	botToken := "" // Замените на ваш токен
 	bot, err := tgbotapi.NewBotAPI(botToken)
 	if err != nil {
 		log.Fatalf("Error creating bot: %v", err)
@@ -66,8 +66,8 @@ func main() {
 			listPlayers(bot, logger, userID)
 		default:
 			// Получаем шансы на атаки перед обработкой ввода
-			attack1Chance, attack2Chance := sendAttackOptions(bot, logger, userID)
-			handleInput(bot, logger, userID, username, msg.Text, attack1Chance, attack2Chance)
+			attack1Damage, attack1Chance, attack2Damage, attack2Chance := sendAttackOptions(bot, logger, userID)
+			handleInput(bot, logger, userID, username, msg.Text, attack1Damage, attack1Chance, attack2Damage, attack2Chance)
 		}
 	}
 }
@@ -103,8 +103,13 @@ func startGame(bot *tgbotapi.BotAPI, logger *log.Logger, userID int64, username 
 	}
 }
 
-func sendAttackOptions(bot *tgbotapi.BotAPI, logger *log.Logger, userID int64) (int, int) {
+func sendAttackOptions(bot *tgbotapi.BotAPI, logger *log.Logger, userID int64) (int, int, int, int) {
 	var attack1Damage, attack1Chance, attack2Damage, attack2Chance int
+
+	player := players[userID]
+	if player == nil || !player.canAttack { // Игрок не подключен к игре или не может атаковать
+		return 0, 0, 0, 0
+	}
 
 	for {
 		// Генерация значений для обычной атаки
@@ -126,32 +131,18 @@ func sendAttackOptions(bot *tgbotapi.BotAPI, logger *log.Logger, userID int64) (
 
 	sendMessage(bot, logger, userID, message)
 
-	return attack1Chance, attack2Chance // Возвращаем шансы
+	return attack1Damage, attack1Chance, attack2Damage, attack2Chance // Возвращаем урон и шансы
 }
 
-func listPlayers(bot *tgbotapi.BotAPI, logger *log.Logger, userID int64) {
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	var messageText string
-	if len(players) == 0 {
-		messageText = "Сейчас нет активных игроков."
-	} else {
-		messageText = "Подключённые игроки:\n"
-		for _, player := range players {
-			messageText += fmt.Sprintf("- @%s (%d)\n", player.Username, player.ID)
-		}
-	}
-
-	sendMessage(bot, logger, userID, messageText)
-}
-
-func handleInput(bot *tgbotapi.BotAPI, logger *log.Logger, userID int64, username string, input string, attack1Chance int, attack2Chance int) {
+func handleInput(bot *tgbotapi.BotAPI, logger *log.Logger, userID int64, username string, input string, attack1Damage int, attack1Chance int, attack2Damage int, attack2Chance int) {
 	mutex.Lock()
 	defer mutex.Unlock()
 
 	player := players[userID]
 	if player == nil || !player.canAttack { // Игрок не подключен к игре или не может атаковать
+		sendMessage(bot, logger,
+			userID,
+			"Сейчас не ваша очередь атаковать.")
 		return
 	}
 
@@ -160,11 +151,14 @@ func handleInput(bot *tgbotapi.BotAPI, logger *log.Logger, userID int64, usernam
 		return // Противник не найден
 	}
 
+	var damage int
+
 	if input == "1" {
 		chance := rand.Intn(100) + 1 // Генерируем случайный шанс от 1 до 100 для обычной атаки
-		damage := rand.Intn(100) + 1 // Урон для обычной атаки от 1 до 100
 
 		if chance <= attack1Chance { // Проверяем успешность атаки
+			damage = attack1Damage // Используем заранее сгенерированный урон
+
 			opponent.Health -= damage // Уменьшаем здоровье противника
 
 			sendMessage(bot, logger,
@@ -183,9 +177,10 @@ func handleInput(bot *tgbotapi.BotAPI, logger *log.Logger, userID int64, usernam
 		}
 	} else if input == "2" {
 		chance := rand.Intn(100) + 1 // Генерируем случайный шанс от 1 до 100 для специальной атаки
-		damage := rand.Intn(100) + 1 // Урон для специальной атаки от 1 до 100
 
 		if chance <= attack2Chance { // Проверяем успешность специальной атаки
+			damage = attack2Damage // Используем заранее сгенерированный урон
+
 			opponent.Health -= damage
 
 			sendMessage(bot, logger,
@@ -233,6 +228,23 @@ func handleInput(bot *tgbotapi.BotAPI, logger *log.Logger, userID int64, usernam
 	sendMessage(bot, logger,
 		userID,
 		fmt.Sprintf("Текущее здоровье @%s: %d.", opponent.Username, opponent.Health))
+}
+
+func listPlayers(bot *tgbotapi.BotAPI, logger *log.Logger, userID int64) {
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	var messageText string
+	if len(players) == 0 {
+		messageText = "Сейчас нет активных игроков."
+	} else {
+		messageText = "Подключённые игроки:\n"
+		for _, player := range players {
+			messageText += fmt.Sprintf("- @%s (%d)\n", player.Username, player.ID)
+		}
+	}
+
+	sendMessage(bot, logger, userID, messageText)
 }
 
 func getOpponent(userID int64) *Player {
